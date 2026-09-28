@@ -14,14 +14,26 @@
     --ui-line: rgba(242, 242, 236, 0.14);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+  html, body { margin: 0; height: 100%; overflow: hidden; background-color: var(--bg); }
   body { font: 12px/1.3 ui-monospace, "SF Mono", Menlo, monospace; -webkit-font-smoothing: antialiased; }
 
   #stage {
     position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block;
     touch-action: none; cursor: crosshair; user-select: none;
   }
-  #stage path { fill: var(--ink); fill-rule: evenodd; }
+  #stage .body { fill: var(--ink); fill-rule: evenodd; }
+  #stage .gloss, #stage .shade { display: none; }
+
+  /* ---------- Aqua style ---------- */
+  body.aqua {
+    background-color: var(--bg);
+    background-image: repeating-linear-gradient(0deg,
+      rgba(255, 255, 255, var(--stripe-hi)) 0 2px, rgba(0, 0, 0, var(--stripe-lo)) 2px 4px);
+  }
+  body.aqua #stage .body { fill: url(#aquaBody); stroke: var(--ink-edge); stroke-width: 1; }
+  body.aqua #stage .gloss { display: inline; fill: url(#aquaGloss); opacity: var(--gloss); }
+  body.aqua #stage .shade { display: inline; fill: url(#aquaGlow); opacity: var(--gloss); }
+  body.aqua #letters { filter: url(#aquaShadow); }
 
   /* ---------- control panel ---------- */
   #toggle {
@@ -82,12 +94,26 @@
 </head>
 <body>
 <svg id="stage" aria-label="NAÏM" role="img">
-  <path id="N"></path>
-  <path id="A"></path>
-  <path id="I0"></path>
-  <path id="I1"></path>
-  <path id="I2"></path>
-  <path id="M"></path>
+  <defs>
+    <!-- Aqua: gel body (darker top, glowing bottom) -->
+    <linearGradient id="aquaBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" /><stop offset="0.5" /><stop offset="1" />
+    </linearGradient>
+    <!-- Aqua: glossy highlight on the upper half -->
+    <linearGradient id="aquaGloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.95" />
+      <stop offset="1" stop-color="#fff" stop-opacity="0.06" />
+    </linearGradient>
+    <!-- Aqua: soft light pooling at the bottom -->
+    <radialGradient id="aquaGlow" cx="0.5" cy="1" r="0.75" fx="0.5" fy="1.05">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.55" />
+      <stop offset="1" stop-color="#fff" stop-opacity="0" />
+    </radialGradient>
+    <filter id="aquaShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+  <g id="letters"></g>
 </svg>
 
 <button id="toggle" aria-label="Toggle controls" title="Controls (H)">
@@ -148,6 +174,7 @@ const DEFAULTS = {
   radius: 28, notch: 22, gap: 8, pad: 8, minSize: 66,
   stiffness: 90, bounce: 0.35, pull: 1.05,
   idleAfter: 2.5, idleSpeed: 0.35, idleRange: 0.75, idleCalm: 0.41, idleMode: 'wander',
+  style: 'flat', gloss: 0.85, stripes: 0.6, shadow: 0.3,
 };
 
 const STORE = 'naim-type-v2';
@@ -198,7 +225,27 @@ const vel = { c: 0, yl: 0, yr: 0, d: 0 };
 
 /* ---------------- input ---------------- */
 const stage = document.getElementById('stage');
-const els = Object.fromEntries(['N', 'A', 'I0', 'I1', 'I2', 'M'].map(id => [id, document.getElementById(id)]));
+const SVGNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, attrs = {}) => {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+};
+// each letter = body + (Aqua only) bottom glow and top gloss, both clipped to the letter
+const els = {};
+const lettersG = document.getElementById('letters');
+const defs = stage.querySelector('defs');
+for (const id of ['N', 'A', 'I0', 'I1', 'I2', 'M']) {
+  const clip = mk('clipPath', { id: 'clip-' + id });
+  const clipPath = mk('path', { 'clip-rule': 'evenodd' });
+  clip.append(clipPath); defs.append(clip);
+  const g = mk('g');
+  const body = mk('path', { class: 'body' });
+  const shade = mk('rect', { class: 'shade', 'clip-path': `url(#clip-${id})` });
+  const gloss = mk('rect', { class: 'gloss', 'clip-path': `url(#clip-${id})` });
+  g.append(body, shade, gloss); lettersG.append(g);
+  els[id] = { body, clipPath, shade, gloss };
+}
 let W = innerWidth, H = innerHeight;
 let pointer = null;              // {u, v} normalised inside the inner area
 let lastInput = -1e9;
@@ -299,17 +346,53 @@ function render() {
   const my = p + ah + g, mh = ih - ah - g;
   const dh = (ihh - g) * pos.d, dw = (lw - g) / 2;
 
-  els.N.setAttribute('d', glyph('N', p, p, lw, nh));
-  els.A.setAttribute('d', glyph('A', rx, p, rw, ah));
-  els.M.setAttribute('d', glyph('M', rx, my, rw, mh));
-  els.I0.setAttribute('d', glyph('RECT', p, iy, dw, dh));
-  els.I1.setAttribute('d', glyph('RECT', p + dw + g, iy, dw, dh));
-  els.I2.setAttribute('d', glyph('RECT', p, iy + dh + g, lw, ihh - dh - g));
+  draw('N', 'N', p, p, lw, nh);
+  draw('A', 'A', rx, p, rw, ah);
+  draw('M', 'M', rx, my, rw, mh);
+  draw('I0', 'RECT', p, iy, dw, dh);
+  draw('I1', 'RECT', p + dw + g, iy, dw, dh);
+  draw('I2', 'RECT', p, iy + dh + g, lw, ihh - dh - g);
+}
+
+function draw(id, name, x, y, w, h) {
+  const e = els[id], d = glyph(name, x, y, w, h);
+  e.body.setAttribute('d', d);
+  if (S.style !== 'aqua') return;
+  e.clipPath.setAttribute('d', d);
+  // Aqua gloss: a rounded capsule hugging the top edge, inset from the sides
+  const inset = Math.max(2, Math.min(S.radius * 0.35, w * 0.08));
+  const gh = Math.max(4, Math.min(h * 0.48, h - inset * 2));
+  const r = Math.max(2, Math.min(S.radius - inset * 0.5, gh / 2, (w - inset * 2) / 2));
+  setRect(e.gloss, x + inset, y + Math.min(2, inset * 0.5), w - inset * 2, gh, r);
+  setRect(e.shade, x, y + h * 0.4, w, h * 0.6, 0);
+}
+function setRect(n, x, y, w, h, r) {
+  n.setAttribute('x', x.toFixed(1)); n.setAttribute('y', y.toFixed(1));
+  n.setAttribute('width', Math.max(0, w).toFixed(1)); n.setAttribute('height', Math.max(0, h).toFixed(1));
+  n.setAttribute('rx', r.toFixed(1));
+}
+
+/* mix a hex colour toward white (t > 0) or black (t < 0) */
+function tone(hex, t) {
+  const n = parseInt(hex.slice(1), 16);
+  const c = [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(t > 0 ? v + (255 - v) * t : v * (1 + t)));
+  return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
 }
 
 function applyColors() {
-  document.documentElement.style.setProperty('--bg', S.bg);
-  document.documentElement.style.setProperty('--ink', S.ink);
+  const root = document.documentElement.style;
+  root.setProperty('--bg', S.bg);
+  root.setProperty('--ink', S.ink);
+  root.setProperty('--ink-edge', tone(S.ink, -0.35));
+  root.setProperty('--gloss', S.gloss);
+  root.setProperty('--stripe-hi', (0.35 * S.stripes).toFixed(3));
+  root.setProperty('--stripe-lo', (0.04 * S.stripes).toFixed(3));
+  const stops = document.querySelectorAll('#aquaBody stop');
+  stops[0].setAttribute('stop-color', tone(S.ink, -0.18));
+  stops[1].setAttribute('stop-color', S.ink);
+  stops[2].setAttribute('stop-color', tone(S.ink, 0.35));
+  document.querySelector('#aquaShadow feDropShadow').setAttribute('flood-opacity', S.shadow);
+  document.body.classList.toggle('aqua', S.style === 'aqua');
 }
 
 /* ---------------- control panel ---------------- */
@@ -319,6 +402,11 @@ const CONTROLS = [
   ['ink', 'Letters', 'color'],
   ['bg', 'Background', 'color'],
   ['swatches'],
+  ['Style'],
+  ['style', 'Look', 'select', ['flat', 'aqua']],
+  ['gloss', 'Gloss', 'range', 0, 1, 0.01],
+  ['stripes', 'Pinstripes', 'range', 0, 1, 0.01],
+  ['shadow', 'Shadow', 'range', 0, 0.8, 0.01],
   ['Shape'],
   ['radius', 'Corner radius', 'range', 0, 80, 1],
   ['notch', 'Notch softness', 'range', 0, 60, 1],
@@ -388,7 +476,7 @@ function buildPanel() {
     const id = 'c-' + key;
     if (type === 'select') {
       row.innerHTML = `<label for="${id}">${label}</label><select id="${id}">${a.map(o => `<option${o === S[key] ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
-      row.querySelector('select').onchange = e => { S[key] = e.target.value; save(); };
+      row.querySelector('select').onchange = e => { S[key] = e.target.value; applyColors(); save(); };
     } else if (type === 'color') {
       row.innerHTML = `<label for="${id}">${label}</label><input id="${id}" type="color" value="${S[key]}"><output>${S[key].slice(1)}</output>`;
       const inp = row.querySelector('input'), out = row.querySelector('output');
@@ -396,7 +484,7 @@ function buildPanel() {
     } else {
       row.innerHTML = `<label for="${id}">${label}</label><input id="${id}" type="range" min="${a}" max="${b}" step="${step}" value="${S[key]}"><output>${fmt(S[key], step)}${unit}</output>`;
       const inp = row.querySelector('input'), out = row.querySelector('output');
-      inp.oninput = () => { S[key] = +inp.value; out.textContent = fmt(S[key], step) + unit; save(); };
+      inp.oninput = () => { S[key] = +inp.value; out.textContent = fmt(S[key], step) + unit; applyColors(); save(); };
     }
     panel.append(row);
   }
