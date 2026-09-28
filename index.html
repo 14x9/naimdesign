@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NAÏM</title>
+<style>
+  :root {
+    --bg: #F4EFE6;
+    --ink: #FF4A1C;
+    --ui-bg: rgba(20, 20, 20, 0.86);
+    --ui-fg: #f2f2ec;
+    --ui-dim: rgba(242, 242, 236, 0.55);
+    --ui-line: rgba(242, 242, 236, 0.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+  body { font: 12px/1.3 ui-monospace, "SF Mono", Menlo, monospace; -webkit-font-smoothing: antialiased; }
+
+  #stage {
+    position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block;
+    touch-action: none; cursor: crosshair; user-select: none;
+  }
+  #stage path { fill: var(--ink); fill-rule: evenodd; }
+
+  /* ---------- control panel ---------- */
+  #toggle {
+    position: fixed; right: 16px; bottom: 16px; z-index: 3;
+    width: 40px; height: 40px; border-radius: 20px; border: 0;
+    background: var(--ui-bg); color: var(--ui-fg); cursor: pointer;
+    display: grid; place-items: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: opacity .2s;
+  }
+  #toggle svg { width: 18px; height: 18px; }
+  body.hide-ui #toggle { opacity: 0.25; }
+  body.hide-ui #toggle:hover { opacity: 1; }
+
+  #panel {
+    position: fixed; right: 16px; bottom: 64px; z-index: 2;
+    width: 280px; max-height: calc(100dvh - 88px); overflow-y: auto;
+    background: var(--ui-bg); color: var(--ui-fg); border-radius: 14px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    padding: 6px 14px 14px; scrollbar-width: thin;
+    transition: opacity .2s, transform .2s;
+  }
+  body.hide-ui #panel { opacity: 0; transform: translateY(8px); pointer-events: none; }
+
+  #panel h3 {
+    margin: 14px 0 6px; font-size: 10px; font-weight: 500; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ui-dim);
+  }
+  .row { display: grid; grid-template-columns: 92px 1fr 38px; align-items: center; gap: 8px; height: 26px; }
+  .row label { color: var(--ui-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row output { text-align: right; color: var(--ui-dim); font-variant-numeric: tabular-nums; }
+  .row input[type=range] { width: 100%; accent-color: var(--ui-fg); margin: 0; }
+  .row input[type=color] {
+    width: 100%; height: 20px; border: 1px solid var(--ui-line); border-radius: 5px; padding: 0; background: none; cursor: pointer;
+  }
+  .row input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  .row input[type=color]::-webkit-color-swatch { border: 0; border-radius: 4px; }
+  .row select {
+    grid-column: 2 / 4; width: 100%; background: transparent; color: var(--ui-fg);
+    border: 1px solid var(--ui-line); border-radius: 5px; font: inherit; padding: 2px 4px;
+  }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .btns button {
+    flex: 1 0 auto; font: inherit; color: var(--ui-fg); background: transparent;
+    border: 1px solid var(--ui-line); border-radius: 6px; padding: 5px 8px; cursor: pointer;
+  }
+  .btns button:hover { background: rgba(242, 242, 236, 0.08); }
+  .btns button.on { background: var(--ui-fg); color: #141414; }
+  .swatches { display: flex; gap: 6px; margin-top: 4px; }
+  .swatches button {
+    flex: 1; height: 22px; border-radius: 6px; border: 1px solid var(--ui-line); cursor: pointer; padding: 0;
+  }
+  .hint { color: var(--ui-dim); margin-top: 12px; }
+
+  @media (max-width: 600px) {
+    #panel { left: 16px; right: 16px; width: auto; max-height: 55dvh; }
+  }
+</style>
+</head>
+<body>
+<svg id="stage" aria-label="NAÏM" role="img">
+  <path id="N"></path>
+  <path id="A"></path>
+  <path id="I0"></path>
+  <path id="I1"></path>
+  <path id="I2"></path>
+  <path id="M"></path>
+</svg>
+
+<button id="toggle" aria-label="Toggle controls" title="Controls (H)">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/>
+    <circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>
+  </svg>
+</button>
+<div id="panel"></div>
+
+<script>
+/* ============================================================
+   Letter geometry — extracted from Figma "type" / Desktop 1.
+   Each vertex: [x, y, k] normalised to the letter's box (0..1).
+   k = fillet tangent length relative to a 16px corner.
+   Corners of the box use the "corner radius" setting; everything
+   else (notches, tips, counters) uses "notch softness".
+   Coordinates scale with the box, fillets stay in pixels —
+   so letters squash like balloons in a box.
+   ============================================================ */
+const GLYPHS = {
+  N: [[
+    [0, 1, 1], [0, 0, 1], [0.4547, 0, 0.59], [0.5611, 0.3408, 1.68], [0.5547, 0, 1.03],
+    [1, 0, 1], [1, 1, 1], [0.5828, 1, 0.59], [0.482, 0.6797, 0.51], [0.4892, 1, 1.04],
+  ]],
+  A: [[
+    [0, 0, 1], [1, 0, 1], [1, 1, 1], [0.5651, 1, 0.79], [0.5487, 0.8805, 0.79],
+    [0.4472, 0.8805, 0.79], [0.4308, 1, 0.79], [0, 1, 1],
+  ], [
+    [0.4667, 0.5451, 0.83], [0.5333, 0.5451, 0.83], [0.5469, 0.6697, 1.21], [0.4531, 0.6697, 1.21],
+  ]],
+  M: [[
+    [0, 0, 1], [0.4418, 0, 0.79], [0.4935, 0.3724, 1.36], [0.5451, 0, 0.78], [1, 0, 1],
+    [1, 1, 1], [0.67, 1, 0.7], [0.643, 0.8685, 0.82], [0.59, 1, 0.51], [0.41, 1, 0.39],
+    [0.33, 0.8685, 0.86], [0.33, 1, 1], [0, 1, 1],
+  ]],
+  RECT: [[[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]],
+};
+
+/* Layout poses from the Figma frames.
+   c  = column split (left share), yl = N/Ï split, yr = A/M split, d = Ï dot-row share */
+const POSES = {
+  'Desktop 1': { c: 0.5,   yl: 0.5,   yr: 0.5,   d: 0.29 },
+  'Desktop 2': { c: 0.723, yl: 0.129, yr: 0.129, d: 0.255 },
+  'iPhone 1':  { c: 0.5,   yl: 0.499, yr: 0.499, d: 0.35 },
+  'iPhone 2':  { c: 0.5,   yl: 0.721, yr: 0.721, d: 0.30 },
+  'iPhone 3':  { c: 0.5,   yl: 0.314, yr: 0.721, d: 0.175 },
+};
+
+/* Colour combos — one is picked at random on every page load. [letters, background] */
+const SWATCHES = [
+  ['#FF4A1C', '#F4EFE6'], ['#000000', '#EEEEE8'], ['#EEEEE8', '#000000'], ['#1B3BFF', '#E9ECF2'],
+  ['#D9FF3F', '#141414'], ['#2E2A26', '#D8CBB5'], ['#F4EFE6', '#FF4A1C'], ['#0B6E4F', '#EDE7DA'],
+];
+
+const DEFAULTS = {
+  ink: '#FF4A1C', bg: '#F4EFE6',
+  radius: 28, notch: 22, gap: 8, pad: 8, minSize: 66,
+  stiffness: 90, bounce: 0.35, pull: 1.05,
+  idleAfter: 2.5, idleSpeed: 0.35, idleRange: 0.75, idleCalm: 0.41, idleMode: 'wander',
+};
+
+const STORE = 'naim-type-v2';
+let S = { ...DEFAULTS };
+try { Object.assign(S, JSON.parse(localStorage.getItem(STORE) || '{}')); } catch (e) {}
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) {} };
+
+// fresh colour combo each load, never the same as last time
+{
+  let last = -1;
+  try { last = +(localStorage.getItem(STORE + '-combo') ?? -1); } catch (e) {}
+  let i = Math.floor(Math.random() * SWATCHES.length);
+  if (i === last) i = (i + 1 + Math.floor(Math.random() * (SWATCHES.length - 1))) % SWATCHES.length;
+  [S.ink, S.bg] = SWATCHES[i];
+  try { localStorage.setItem(STORE + '-combo', String(i)); } catch (e) {}
+}
+
+/* ---------------- path building ---------------- */
+function roundedPoly(pts, bx, by, bw, bh, R, Rn) {
+  const n = pts.length;
+  const P = pts.map(([x, y, k]) => {
+    const corner = (x === 0 || x === 1) && (y === 0 || y === 1);
+    return { x: bx + x * bw, y: by + y * bh, r: corner ? R : k * Rn };
+  });
+  let d = '';
+  for (let i = 0; i < n; i++) {
+    const a = P[(i - 1 + n) % n], v = P[i], b = P[(i + 1) % n];
+    const l1 = Math.hypot(a.x - v.x, a.y - v.y) || 1e-6;
+    const l2 = Math.hypot(b.x - v.x, b.y - v.y) || 1e-6;
+    const t = Math.min(v.r, l1 / 2, l2 / 2);
+    const p1x = v.x + (a.x - v.x) / l1 * t, p1y = v.y + (a.y - v.y) / l1 * t;
+    const p2x = v.x + (b.x - v.x) / l2 * t, p2y = v.y + (b.y - v.y) / l2 * t;
+    const K = 0.5523;
+    d += (i ? 'L' : 'M') + p1x.toFixed(2) + ' ' + p1y.toFixed(2)
+      + 'C' + (p1x + (v.x - p1x) * K).toFixed(2) + ' ' + (p1y + (v.y - p1y) * K).toFixed(2)
+      + ' ' + (p2x + (v.x - p2x) * K).toFixed(2) + ' ' + (p2y + (v.y - p2y) * K).toFixed(2)
+      + ' ' + p2x.toFixed(2) + ' ' + p2y.toFixed(2);
+  }
+  return d + 'Z';
+}
+const glyph = (name, x, y, w, h) =>
+  GLYPHS[name].map(p => roundedPoly(p, x, y, w, h, S.radius, S.notch)).join('');
+
+/* ---------------- springs ---------------- */
+const keys = ['c', 'yl', 'yr', 'd'];
+const pos = { ...POSES['Desktop 1'] };
+const vel = { c: 0, yl: 0, yr: 0, d: 0 };
+
+/* ---------------- input ---------------- */
+const stage = document.getElementById('stage');
+const els = Object.fromEntries(['N', 'A', 'I0', 'I1', 'I2', 'M'].map(id => [id, document.getElementById(id)]));
+let W = innerWidth, H = innerHeight;
+let pointer = null;              // {u, v} normalised inside the inner area
+let lastInput = -1e9;
+let idleW = 0;                   // 0 = cursor driven, 1 = idle
+let splitW = 1;                  // 0 = rows locked together (cursor), 1 = rows move freely
+let hold = null, holdUntil = 0;  // pose snapped from the panel
+
+function onPointer(e) {
+  if (e.target.closest && e.target.closest('#panel, #toggle')) return;
+  const iw = W - 2 * S.pad, ih = H - 2 * S.pad;
+  pointer = { u: (e.clientX - S.pad) / iw, v: (e.clientY - S.pad) / ih };
+  lastInput = performance.now();
+  hold = null;
+}
+addEventListener('pointermove', onPointer, { passive: true });
+addEventListener('pointerdown', onPointer, { passive: true });
+addEventListener('resize', () => { W = innerWidth; H = innerHeight; });
+
+/* ---------------- idle motion ---------------- */
+const wave = (t, s) =>
+  0.5 * Math.sin(t * 0.37 + s) + 0.3 * Math.sin(t * 0.61 + s * 2.1) + 0.2 * Math.sin(t * 1.03 + s * 3.7);
+
+function idleTarget(t) {
+  if (S.idleMode === 'poses') {
+    const list = Object.values(POSES);
+    const period = 5 / Math.max(S.idleSpeed, 0.05);
+    return list[Math.floor(t / period) % list.length];
+  }
+  const tt = t * S.idleSpeed, r = S.idleRange * 0.5;
+  return {
+    c: 0.5 + r * wave(tt, 0.0),
+    yl: 0.5 + r * wave(tt, 1.7),
+    yr: 0.5 + r * wave(tt * 0.9, 4.2),
+    d: 0.27 + 0.1 * wave(tt * 0.8, 2.9),
+  };
+}
+
+function pointerTarget() {
+  if (!pointer) return POSES['Desktop 1'];
+  const u = pointer.u, v = pointer.v;
+  // one shared row line, so all four letters meet at a single point
+  const y = 0.5 + (v - 0.5) * S.pull;
+  return { c: 0.5 + (u - 0.5) * S.pull, yl: y, yr: y, d: 0.29 };
+}
+
+/* ---------------- frame loop ---------------- */
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.033, (now - prev) / 1000); prev = now;
+  const t = now / 1000;
+
+  const idling = now - lastInput > S.idleAfter * 1000 && !hold;
+  idleW += ((idling ? 1 : 0) - idleW) * Math.min(1, dt * (idling ? 0.6 : 4));
+
+  const free = idling || !!hold;
+  splitW += ((free ? 1 : 0) - splitW) * Math.min(1, dt * (free ? 0.6 : 8));
+
+  let target;
+  if (hold) {
+    target = hold;
+    if (now > holdUntil) { hold = null; lastInput = now; }
+  } else {
+    const a = pointerTarget(), b = idleTarget(t);
+    target = {};
+    for (const k of keys) target[k] = a[k] + (b[k] - a[k]) * idleW;
+  }
+
+  // clamp targets so no letter collapses below minSize
+  const iw = W - 2 * S.pad, ih = H - 2 * S.pad;
+  const lim = (avail) => Math.min(0.49, S.minSize / Math.max(1, avail));
+  const cl = (x, m) => Math.min(1 - m, Math.max(m, x));
+  const mC = lim(iw - S.gap), mY = lim(ih - S.gap);
+
+  // spring: stiffness k, damping from "bounce" (0 = no overshoot, 1 = very wobbly)
+  const k = S.stiffness * (1 - idleW * (1 - S.idleCalm));
+  const zeta = 1 - S.bounce * 0.9;
+  const damp = 2 * zeta * Math.sqrt(k);
+  for (const key of keys) {
+    const m = key === 'c' ? mC : key === 'd' ? 0.08 : mY;
+    const tg = cl(target[key], m);
+    vel[key] += ((tg - pos[key]) * k - vel[key] * damp) * dt;
+    pos[key] += vel[key] * dt;
+    pos[key] = cl(pos[key], m * 0.6);
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+function render() {
+  const { pad: p, gap: g } = S;
+  const iw = W - 2 * p, ih = H - 2 * p;
+  const lw = (iw - g) * pos.c, rw = iw - g - lw, rx = p + lw + g;
+  // while the cursor drives, both row splits collapse onto one shared line
+  const row = (pos.yl + pos.yr) / 2;
+  const yl = row + (pos.yl - row) * splitW, yr = row + (pos.yr - row) * splitW;
+  const nh = (ih - g) * yl, ah = (ih - g) * yr;
+  const iy = p + nh + g, ihh = ih - nh - g;
+  const my = p + ah + g, mh = ih - ah - g;
+  const dh = (ihh - g) * pos.d, dw = (lw - g) / 2;
+
+  els.N.setAttribute('d', glyph('N', p, p, lw, nh));
+  els.A.setAttribute('d', glyph('A', rx, p, rw, ah));
+  els.M.setAttribute('d', glyph('M', rx, my, rw, mh));
+  els.I0.setAttribute('d', glyph('RECT', p, iy, dw, dh));
+  els.I1.setAttribute('d', glyph('RECT', p + dw + g, iy, dw, dh));
+  els.I2.setAttribute('d', glyph('RECT', p, iy + dh + g, lw, ihh - dh - g));
+}
+
+function applyColors() {
+  document.documentElement.style.setProperty('--bg', S.bg);
+  document.documentElement.style.setProperty('--ink', S.ink);
+}
+
+/* ---------------- control panel ---------------- */
+const panel = document.getElementById('panel');
+const CONTROLS = [
+  ['Colour'],
+  ['ink', 'Letters', 'color'],
+  ['bg', 'Background', 'color'],
+  ['swatches'],
+  ['Shape'],
+  ['radius', 'Corner radius', 'range', 0, 80, 1],
+  ['notch', 'Notch softness', 'range', 0, 60, 1],
+  ['gap', 'Gap', 'range', 0, 60, 1],
+  ['pad', 'Edge space', 'range', 0, 120, 1],
+  ['minSize', 'Min letter', 'range', 8, 200, 1],
+  ['Motion'],
+  ['stiffness', 'Stiffness', 'range', 10, 300, 1],
+  ['bounce', 'Bounce', 'range', 0, 1, 0.01],
+  ['pull', 'Cursor pull', 'range', 0, 1.2, 0.01],
+  ['Idle'],
+  ['idleMode', 'Mode', 'select', ['wander', 'poses']],
+  ['idleAfter', 'Starts after', 'range', 0.5, 10, 0.1, 's'],
+  ['idleSpeed', 'Speed', 'range', 0.05, 1.5, 0.01],
+  ['idleRange', 'Range', 'range', 0, 1, 0.01],
+  ['idleCalm', 'Calmness', 'range', 0.05, 1, 0.01],
+  ['poses'],
+  ['actions'],
+];
+
+const fmt = (v, step) => step < 1 ? (+v).toFixed(2) : String(Math.round(v));
+function buildPanel() {
+  panel.innerHTML = '';
+  for (const c of CONTROLS) {
+    if (c.length === 1 && !['swatches', 'poses', 'actions'].includes(c[0])) {
+      panel.insertAdjacentHTML('beforeend', `<h3>${c[0]}</h3>`); continue;
+    }
+    if (c[0] === 'swatches') {
+      const w = document.createElement('div'); w.className = 'swatches';
+      for (const [ink, bg] of SWATCHES) {
+        const b = document.createElement('button');
+        b.style.background = `linear-gradient(135deg, ${ink} 50%, ${bg} 50%)`;
+        b.title = `${ink} on ${bg}`;
+        b.onclick = () => { S.ink = ink; S.bg = bg; applyColors(); save(); buildPanel(); };
+        w.append(b);
+      }
+      panel.append(w); continue;
+    }
+    if (c[0] === 'poses') {
+      panel.insertAdjacentHTML('beforeend', '<h3>Figma poses</h3>');
+      const w = document.createElement('div'); w.className = 'btns';
+      for (const name of Object.keys(POSES)) {
+        const b = document.createElement('button'); b.textContent = name.replace('Desktop ', 'D').replace('iPhone ', 'P');
+        b.title = name;
+        b.onclick = () => { hold = POSES[name]; holdUntil = performance.now() + 4000; idleW = 0; };
+        w.append(b);
+      }
+      panel.append(w); continue;
+    }
+    if (c[0] === 'actions') {
+      panel.insertAdjacentHTML('beforeend', '<h3>Settings</h3>');
+      const w = document.createElement('div'); w.className = 'btns';
+      const reset = document.createElement('button'); reset.textContent = 'Reset';
+      reset.onclick = () => { S = { ...DEFAULTS, ink: S.ink, bg: S.bg }; applyColors(); save(); buildPanel(); };
+      const copy = document.createElement('button'); copy.textContent = 'Copy JSON';
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(JSON.stringify(S, null, 2)); copy.textContent = 'Copied'; }
+        catch (e) { copy.textContent = 'Failed'; }
+        setTimeout(() => copy.textContent = 'Copy JSON', 1200);
+      };
+      w.append(reset, copy); panel.append(w);
+      panel.insertAdjacentHTML('beforeend', '<div class="hint">H — hide / show panel</div>');
+      continue;
+    }
+    const [key, label, type, a, b, step, unit = ''] = c;
+    const row = document.createElement('div'); row.className = 'row';
+    const id = 'c-' + key;
+    if (type === 'select') {
+      row.innerHTML = `<label for="${id}">${label}</label><select id="${id}">${a.map(o => `<option${o === S[key] ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+      row.querySelector('select').onchange = e => { S[key] = e.target.value; save(); };
+    } else if (type === 'color') {
+      row.innerHTML = `<label for="${id}">${label}</label><input id="${id}" type="color" value="${S[key]}"><output>${S[key].slice(1)}</output>`;
+      const inp = row.querySelector('input'), out = row.querySelector('output');
+      inp.oninput = () => { S[key] = inp.value; out.textContent = inp.value.slice(1); applyColors(); save(); };
+    } else {
+      row.innerHTML = `<label for="${id}">${label}</label><input id="${id}" type="range" min="${a}" max="${b}" step="${step}" value="${S[key]}"><output>${fmt(S[key], step)}${unit}</output>`;
+      const inp = row.querySelector('input'), out = row.querySelector('output');
+      inp.oninput = () => { S[key] = +inp.value; out.textContent = fmt(S[key], step) + unit; save(); };
+    }
+    panel.append(row);
+  }
+}
+
+const toggleUI = () => document.body.classList.toggle('hide-ui');
+document.getElementById('toggle').onclick = toggleUI;
+addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') toggleUI(); });
+document.body.classList.add('hide-ui');
+
+applyColors();
+buildPanel();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
