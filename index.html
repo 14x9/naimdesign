@@ -93,15 +93,12 @@
   }
   .hint { color: var(--ui-dim); margin-top: 12px; }
 
-  /* ---------- cursor: a dot that inverts whatever is behind it ---------- */
-  #dot {
-    position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none;
-    width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
-    background: #fff; mix-blend-mode: difference;
-    opacity: 0; transition: opacity .2s; will-change: transform;
-  }
-  body.dot-on #dot { opacity: 1; }
-  @media (hover: none) { #dot { display: none; } }
+  /* ---------- cursor: a dot that swaps the page's two colours ---------- */
+  #cursor { opacity: 0; transition: opacity .35s; pointer-events: none; }
+  body.dot-on #cursor { opacity: 1; }
+  #dotFill { fill: var(--ink); }
+  #dotCut { fill: var(--bg); fill-rule: evenodd; }
+  @media (hover: none) { #cursor { display: none; } }
 
   @media (max-width: 600px) {
     #panel { left: 16px; right: 16px; width: auto; max-height: 55dvh; }
@@ -130,10 +127,15 @@
     </filter>
   </defs>
   <g id="letters"></g>
+  <!-- cursor: letter colour over the background, background colour over the letters -->
+  <clipPath id="dotClip"><circle id="dotClipCircle" r="9" /></clipPath>
+  <g id="cursor" aria-hidden="true">
+    <circle id="dotFill" r="9" />
+    <path id="dotCut" clip-path="url(#dotClip)" />
+  </g>
 </svg>
 
 <div id="panel"></div>
-<div id="dot" aria-hidden="true"></div>
 
 <script>
 /* ============================================================
@@ -320,6 +322,7 @@ let pointer = null;              // {u, v} normalised inside the inner area
 let lastInput = -1e9;
 let idleW = 0;                   // 0 = cursor driven, 1 = idle
 let splitW = 1;                  // 0 = rows locked together (cursor), 1 = rows move freely
+const mouse = { over: false, last: -1e9, shown: false };
 let hold = null, holdUntil = 0;  // pose snapped from the panel
 
 function onPointer(e) {
@@ -399,6 +402,8 @@ function frame(now) {
     pos[key] += vel[key] * dt;
     pos[key] = cl(pos[key], m * 0.6);
   }
+  const shown = mouse.over && now - mouse.last < S.idleAfter * 1000;
+  if (shown !== mouse.shown) { mouse.shown = shown; document.body.classList.toggle('dot-on', shown); }
   render();
   requestAnimationFrame(frame);
 }
@@ -415,18 +420,20 @@ function render() {
   const my = p + ah + g, mh = ih - ah - g;
   const dh = (ihh - g) * pos.d, dw = (lw - g) / 2;
 
-  draw('N', 'N', p, p, lw, nh);
-  draw('A', 'A', rx, p, rw, ah);
-  draw('M', 'M', rx, my, rw, mh);
-  draw('I0', 'RECT', p, iy, dw, dh);
-  draw('I1', 'RECT', p + dw + g, iy, dw, dh);
-  draw('I2', 'RECT', p, iy + dh + g, lw, ihh - dh - g);
+  const all = draw('N', 'N', p, p, lw, nh)
+    + draw('A', 'A', rx, p, rw, ah)
+    + draw('M', 'M', rx, my, rw, mh)
+    + draw('I0', 'RECT', p, iy, dw, dh)
+    + draw('I1', 'RECT', p + dw + g, iy, dw, dh)
+    + draw('I2', 'RECT', p, iy + dh + g, lw, ihh - dh - g);
+  // the part of the cursor over a letter is painted in the background colour
+  if (mouse.over) dotCut.setAttribute('d', all);  // keep updating while it fades out too
 }
 
 function draw(id, name, x, y, w, h) {
   const e = els[id], d = glyph(name, x, y, w, h);
   e.body.setAttribute('d', d);
-  if (S.style !== 'aqua') return;
+  if (S.style !== 'aqua') return d;
   e.clipPath.setAttribute('d', d);
   // Aqua gloss: a rounded capsule hugging the top edge, inset from the sides
   const inset = Math.max(2, Math.min(S.radius * 0.35, w * 0.08));
@@ -434,6 +441,7 @@ function draw(id, name, x, y, w, h) {
   const r = Math.max(2, Math.min(S.radius - inset * 0.5, gh / 2, (w - inset * 2) / 2));
   setRect(e.gloss, x + inset, y + Math.min(2, inset * 0.5), w - inset * 2, gh, r);
   setRect(e.shade, x, y + h * 0.4, w, h * 0.6, 0);
+  return d;
 }
 function setRect(n, x, y, w, h, r) {
   n.setAttribute('x', x.toFixed(1)); n.setAttribute('y', y.toFixed(1));
@@ -575,14 +583,17 @@ addEventListener('pointerdown', e => {
 });
 document.body.classList.add('hide-ui');
 
-// custom cursor dot (mouse / trackpad only); the normal cursor comes back over the panel
-const dot = document.getElementById('dot');
+// custom cursor dot (mouse / trackpad only); the normal cursor comes back over the panel,
+// and the dot fades out when the mouse leaves or the page goes idle
+const cursorEls = ['dotFill', 'dotClipCircle'].map(id => document.getElementById(id));
+const dotCut = document.getElementById('dotCut');
 addEventListener('pointermove', e => {
   if (e.pointerType !== 'mouse') return;
-  dot.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
-  document.body.classList.toggle('dot-on', !e.target.closest?.('#panel'));
+  for (const c of cursorEls) { c.setAttribute('cx', e.clientX); c.setAttribute('cy', e.clientY); }
+  mouse.over = !e.target.closest?.('#panel');
+  mouse.last = performance.now();
 }, { passive: true });
-document.documentElement.addEventListener('mouseleave', () => document.body.classList.remove('dot-on'));
+document.documentElement.addEventListener('mouseleave', () => { mouse.over = false; });
 
 applyColors();
 buildPanel();
