@@ -35,7 +35,7 @@
 
   #stage {
     position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block;
-    touch-action: none; cursor: crosshair; user-select: none;
+    touch-action: none; cursor: none; user-select: none;
   }
   #stage .body { fill: var(--ink); fill-rule: evenodd; }
   #stage .gloss, #stage .shade { display: none; }
@@ -93,6 +93,16 @@
   }
   .hint { color: var(--ui-dim); margin-top: 12px; }
 
+  /* ---------- cursor: a dot that inverts whatever is behind it ---------- */
+  #dot {
+    position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none;
+    width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
+    background: #fff; mix-blend-mode: difference;
+    opacity: 0; transition: opacity .2s; will-change: transform;
+  }
+  body.dot-on #dot { opacity: 1; }
+  @media (hover: none) { #dot { display: none; } }
+
   @media (max-width: 600px) {
     #panel { left: 16px; right: 16px; width: auto; max-height: 55dvh; }
   }
@@ -123,6 +133,7 @@
 </svg>
 
 <div id="panel"></div>
+<div id="dot" aria-hidden="true"></div>
 
 <script>
 /* ============================================================
@@ -563,6 +574,15 @@ addEventListener('pointerdown', e => {
   if (taps.length >= 3) { taps = []; toggleUI(); }
 });
 document.body.classList.add('hide-ui');
+
+// custom cursor dot (mouse / trackpad only); the normal cursor comes back over the panel
+const dot = document.getElementById('dot');
+addEventListener('pointermove', e => {
+  if (e.pointerType !== 'mouse') return;
+  dot.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+  document.body.classList.toggle('dot-on', !e.target.closest?.('#panel'));
+}, { passive: true });
+document.documentElement.addEventListener('mouseleave', () => document.body.classList.remove('dot-on'));
 
 applyColors();
 buildPanel();
