@@ -51,6 +51,13 @@
   body.aqua #stage .shade { display: inline; fill: url(#aquaGlow); opacity: var(--gloss); }
   body.aqua #letters { filter: url(#aquaShadow); }
 
+  /* ---------- Glow style: dark glassy tiles lit from the inside ---------- */
+  #stage .glow, #stage .rim, #bloom { display: none; }
+  body.glow #stage .body { fill: url(#glowBody); }
+  body.glow #stage .glow { display: inline; fill: none; stroke: url(#glowLight); filter: url(#glowBlur); }
+  body.glow #stage .rim { display: inline; fill: none; stroke: url(#rimLight); }
+  body.glow #bloom { display: inline; fill: url(#bloomLight); }
+
   /* ---------- control panel ---------- */
 
   #panel {
@@ -122,10 +129,27 @@
       <stop offset="0" stop-color="#fff" stop-opacity="0.55" />
       <stop offset="1" stop-color="#fff" stop-opacity="0" />
     </radialGradient>
+    <radialGradient id="glowBody" gradientUnits="userSpaceOnUse">
+      <stop offset="0" /><stop offset="1" />
+    </radialGradient>
+    <radialGradient id="glowLight" gradientUnits="userSpaceOnUse">
+      <stop offset="0" /><stop offset="0.45" /><stop offset="1" />
+    </radialGradient>
+    <radialGradient id="rimLight" gradientUnits="userSpaceOnUse">
+      <stop offset="0" /><stop offset="0.5" /><stop offset="1" />
+    </radialGradient>
+    <radialGradient id="bloomLight" gradientUnits="userSpaceOnUse">
+      <stop offset="0" /><stop offset="1" />
+    </radialGradient>
+    <filter id="glowBlur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" />
+    </filter>
     <filter id="aquaShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.3" />
     </filter>
   </defs>
+  <!-- Glow: light that sits where the four letters meet -->
+  <rect id="bloom" x="0" y="0" width="100%" height="100%" />
   <g id="letters"></g>
   <!-- cursor: letter colour over the background, background colour over the letters -->
   <clipPath id="dotClip"><circle id="dotClipCircle" r="9" /></clipPath>
@@ -188,6 +212,7 @@ const DEFAULTS = {
   stiffness: 90, bounce: 0.35, pull: 1.05,
   idleAfter: 2.5, idleSpeed: 0.35, idleRange: 0.75, idleCalm: 0.41, idleMode: 'wander',
   style: 'surprise', gloss: 0.85, stripes: 0.6, shadow: 0.3,
+  glow: 1, glowSize: 26, reach: 0.45,
 };
 
 const STORE = 'naim-type-v3';
@@ -252,7 +277,7 @@ function surprisePalette() {
 }
 
 // fresh colour combo each load: generated for "surprise", otherwise from the curated list
-if (S.style === 'surprise') {
+if (S.style === 'surprise' || S.style === 'glow') {
   [S.ink, S.bg] = surprisePalette();
 } else {
   let last = -1;
@@ -302,7 +327,8 @@ const mk = (tag, attrs = {}) => {
   for (const k in attrs) n.setAttribute(k, attrs[k]);
   return n;
 };
-// each letter = body + (Aqua only) bottom glow and top gloss, both clipped to the letter
+// each letter = body + (Aqua) bottom glow and top gloss / (Glow) inner glow and rim light,
+// all clipped to the letter
 const els = {};
 const lettersG = document.getElementById('letters');
 const defs = stage.querySelector('defs');
@@ -314,8 +340,13 @@ for (const id of ['N', 'A', 'I0', 'I1', 'I2', 'M']) {
   const body = mk('path', { class: 'body' });
   const shade = mk('rect', { class: 'shade', 'clip-path': `url(#clip-${id})` });
   const gloss = mk('rect', { class: 'gloss', 'clip-path': `url(#clip-${id})` });
-  g.append(body, shade, gloss); lettersG.append(g);
-  els[id] = { body, clipPath, shade, gloss };
+  // glow: blur first, then clip — so the light stays inside the letter
+  const glowWrap = mk('g', { 'clip-path': `url(#clip-${id})` });
+  const glow = mk('path', { class: 'glow' });
+  glowWrap.append(glow);
+  const rim = mk('path', { class: 'rim', 'clip-path': `url(#clip-${id})` });
+  g.append(body, shade, gloss, glowWrap, rim); lettersG.append(g);
+  els[id] = { body, clipPath, shade, gloss, glow, rim };
 }
 let W = innerWidth, H = innerHeight;
 let pointer = null;              // {u, v} normalised inside the inner area
@@ -426,6 +457,7 @@ function render() {
     + draw('I0', 'RECT', p, iy, dw, dh)
     + draw('I1', 'RECT', p + dw + g, iy, dw, dh)
     + draw('I2', 'RECT', p, iy + dh + g, lw, ihh - dh - g);
+  if (S.style === 'glow') placeLight(p + lw + g / 2, p + nh + g / 2);
   // the part of the cursor over a letter is painted in the background colour
   if (mouse.over) dotCut.setAttribute('d', all);  // keep updating while it fades out too
 }
@@ -433,6 +465,12 @@ function render() {
 function draw(id, name, x, y, w, h) {
   const e = els[id], d = glyph(name, x, y, w, h);
   e.body.setAttribute('d', d);
+  if (S.style === 'glow') {
+    e.clipPath.setAttribute('d', d);
+    e.glow.setAttribute('d', d);
+    e.rim.setAttribute('d', d);
+    return d;
+  }
   if (S.style !== 'aqua') return d;
   e.clipPath.setAttribute('d', d);
   // Aqua gloss: a rounded capsule hugging the top edge, inset from the sides
@@ -443,6 +481,16 @@ function draw(id, name, x, y, w, h) {
   setRect(e.shade, x, y + h * 0.4, w, h * 0.6, 0);
   return d;
 }
+// Glow: every light gradient is centred on the point where the letters meet
+const lightGrads = ['glowBody', 'glowLight', 'rimLight', 'bloomLight'].map(id => document.getElementById(id));
+function placeLight(x, y) {
+  const reach = Math.hypot(W, H) * S.reach;
+  for (const gr of lightGrads) {
+    gr.setAttribute('cx', x.toFixed(1)); gr.setAttribute('cy', y.toFixed(1));
+    gr.setAttribute('r', (gr.id === 'bloomLight' ? reach * 0.45 : reach).toFixed(1));
+  }
+}
+
 function setRect(n, x, y, w, h, r) {
   n.setAttribute('x', x.toFixed(1)); n.setAttribute('y', y.toFixed(1));
   n.setAttribute('width', Math.max(0, w).toFixed(1)); n.setAttribute('height', Math.max(0, h).toFixed(1));
@@ -470,6 +518,36 @@ function applyColors() {
   stops[2].setAttribute('stop-color', tone(S.ink, 0.35));
   document.querySelector('#aquaShadow feDropShadow').setAttribute('flood-opacity', S.shadow);
   document.body.classList.toggle('aqua', S.style === 'aqua');
+  document.body.classList.toggle('glow', S.style === 'glow');
+  if (S.style === 'glow') applyGlow();
+}
+
+/* Glow palette: the more vivid of the two colours becomes the light,
+   everything else is a deep, near-black version of it */
+function vividness(hex) {
+  const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255];
+  const mx = Math.max(...c), mn = Math.min(...c);
+  return mx ? (mx - mn) / mx * (0.4 + mx / 255) : 0;
+}
+function applyGlow() {
+  let light = vividness(S.ink) >= vividness(S.bg) ? S.ink : S.bg;
+  if (luminance(light) < 0.04) light = tone(light, 0.25);  // very dark colours can't glow
+  const root = document.documentElement.style;
+  const bg = tone(light, -0.93), tile = tone(light, -0.84);
+  // the cursor keeps to two colours: light over the background, background over the letters
+  root.setProperty('--bg', bg);
+  root.setProperty('--ink', light);
+  const set = (id, stops) => document.querySelectorAll(`#${id} stop`).forEach((st, i) => {
+    st.setAttribute('stop-color', stops[i][0]); st.setAttribute('stop-opacity', stops[i][1]);
+  });
+  const k = S.glow;
+  set('glowBody', [[tone(light, -0.55), 1], [tile, 1]]);
+  set('glowLight', [[tone(light, 0.3), Math.min(1, k)], [light, 0.55 * k], [light, 0.04 * k]]);
+  set('rimLight', [[tone(light, 0.8), 1], [light, 0.55], [light, 0.08]]);
+  set('bloomLight', [[light, 0.9 * k], [light, 0]]);
+  document.querySelectorAll('#stage .glow').forEach(n => n.setAttribute('stroke-width', S.glowSize * 2));
+  document.querySelectorAll('#stage .rim').forEach(n => n.setAttribute('stroke-width', 3));
+  document.querySelector('#glowBlur feGaussianBlur').setAttribute('stdDeviation', (S.glowSize * 0.55).toFixed(1));
 }
 
 /* ---------------- control panel ---------------- */
@@ -480,10 +558,13 @@ const CONTROLS = [
   ['bg', 'Background', 'color'],
   ['swatches'],
   ['Style'],
-  ['style', 'Look', 'select', ['surprise', 'flat', 'aqua']],
+  ['style', 'Look', 'select', ['surprise', 'flat', 'aqua', 'glow']],
   ['gloss', 'Gloss', 'range', 0, 1, 0.01],
   ['stripes', 'Pinstripes', 'range', 0, 1, 0.01],
   ['shadow', 'Shadow', 'range', 0, 0.8, 0.01],
+  ['glow', 'Glow', 'range', 0, 1.5, 0.01],
+  ['glowSize', 'Glow depth', 'range', 4, 80, 1],
+  ['reach', 'Light reach', 'range', 0.15, 1.2, 0.01],
   ['Shape'],
   ['radius', 'Corner radius', 'range', 0, 80, 1],
   ['notch', 'Notch softness', 'range', 0, 60, 1],
